@@ -4,7 +4,7 @@ Full-stack debugging assessment for the Software Development Intern role. This R
 
 ## How I approached it
 
-I didn't start by reading the code top to bottom. I ran the app first, clicked through it, and let it break, then chased each error back to its source. A couple of the "bugs" only showed up once I actually tried to use the feature (delete looked fine until I checked that the client was actually gone), so running things end-to-end mattered more than reading them.
+I didn't start by reading the code top to bottom. I ran the app first, clicked through it, and let it break then chased each error back to its source. A couple of the "bugs" only showed up once I actually tried to use the feature (delete looked fine until I checked that the client was actually gone), so running things end-to-end mattered more than reading them.
 
 Once the app was up, I isolated each backend bug with a small standalone Node script before touching `server.js`, so I could confirm the actual behavior (e.g. `"1" !== 1` evaluating to `true`) instead of assuming from reading the code. Then I fixed, restarted, and re-tested with `curl` against the real endpoints before moving to the next issue.
 
@@ -14,11 +14,11 @@ Once the app was up, I isolated each backend bug with a small standalone Node sc
 
 ### 1. Blank white page on first run
 
-**Where:** `client/` — this is the very first thing I hit, before I'd even reached the login screen.
+**Where:** `client/` - this is the very first thing I hit, before I'd even reached the login screen.
 **Root cause:** Two things compounding:
 
 1. `main.jsx` imports `App` without a file extension (`from "./App"` instead of `"./App.jsx"`).
-2. There's no `vite.config.js` in the original spec, so `@vitejs/plugin-react` listed in `package.json` but never registered and was never actually active.
+2. There's no `vite.config.js` in the original spec, so `@vitejs/plugin-react` listed in `package.json` but never registered was never actually active.
 
 Without the plugin wired up, Vite doesn't reliably transform/resolve an extensionless `.jsx` import the way you'd expect from a standard Vite+React template. `index.html` loads, `<div id="root">` renders, but React never mounts into it hence a blank page with no visible error unless you check the browser console.
 **Fix:** Added `client/vite.config.js` registering `@vitejs/plugin-react`, and made the import explicit (`from "./App.jsx"`) so it doesn't depend on plugin resolution behavior at all.
@@ -26,13 +26,13 @@ Without the plugin wired up, Vite doesn't reliably transform/resolve an extensio
 ### 2. Delete client silently did nothing
 
 **Where:** `server.js`, `DELETE /api/clients/:id`
-**Root cause:** `req.params.id` is always a string in Express, but `client.id` is a number. `client.id !== id` was comparing `1 !== "1"`, which is always `true`, so no client was ever filtered out. The endpoint still returned a success message, which made it worse. It looked like it worked.
+**Root cause:** `req.params.id` is always a string in Express, but `client.id` is a number. `client.id !== id` was comparing `1 !== "1"`, which is always `true`, so no client was ever filtered out. The endpoint still returned a success message, which made it worse. it looked like it worked.
 **Fix:** Convert `req.params.id` to a number before filtering, and return 400 if it isn't a valid number.
 
 ### 3. Project filtering by client returned nothing
 
 **Where:** `server.js`, `GET /api/projects`
-**Root cause:** Same type mismatch. `req.query.clientId` is a string, `project.clientId` is a number.
+**Root cause:** Same type mismatch `req.query.clientId` is a string, `project.clientId` is a number.
 **Fix:** `Number(clientId)` before comparing.
 
 ### 4. Client list never rendered
@@ -68,8 +68,20 @@ Without the plugin wired up, Vite doesn't reliably transform/resolve an extensio
 ### 9. No handling for an expired or invalid session
 
 **Where:** `App.jsx`
-**Root cause:** If a request came back 401, the app didn't do anything, no message, no redirect to login, so it just looked broken.
+**Root cause:** If a request came back 401, the app didn't do anything. no message, no redirect to login, so it just looked broken.
 **Fix:** Added a `handleSessionExpired()` helper that clears the token and shows a message when any protected request returns 401.
+
+### 10. Login crashed with "Illegal arguments: string, undefined"
+
+**Where:** `server.js`, seed `users` array + login handler
+**Root cause:** The user object stored the hashed password under the key `password`, but the login handler calls `bcrypt.compare(password, user.passwordHash)` reading a `passwordHash` key that didn't exist on the object. `user.passwordHash` was `undefined`, and bcrypt throws rather than failing gracefully when given `undefined` as a comparison target. This only surfaced when I actually tried logging in on a fresh machine after cloning the repo. my own local copy had the key named correctly, so I didn't catch it until testing a clean install.
+**Fix:** Renamed the seed object's key to `passwordHash` to match what the rest of the file expects.
+
+### 11. Leftover status message carried over from the app into the login screen
+
+**Where:** `App.jsx`, `logout()`
+**Root cause:** `logout()` cleared the token and client/project state but never reset `message`. Since both the logged-in view and the login view render the same `{message && <p>...}` block, whatever the last status message was (e.g. "Client deleted successfully") stayed in state and reappeared on the login screen after logging out — even though it had nothing to do with logging in.
+**Fix:** `logout()` now also calls `setMessage("")`.
 
 ---
 
@@ -93,7 +105,7 @@ This is the section I want to actually explain rather than just list, because it
 - Replaced the shared fake token with a real signed JWT (`jsonwebtoken`), unique per user, expiring after 2 hours. The secret is read from an environment variable (`.env`, gitignored) rather than hardcoded. the server now refuses to start without it, which forces this to be set deliberately rather than forgotten.
 - Login and password checks return the exact same generic message ("Invalid email or password") whether the email doesn't exist or the password is wrong. The original code's error message would have told an attacker which case applied, making it easier to enumerate valid emails.
 - Added rate limiting on `/api/login` (10 attempts per IP per 15 minutes) since there was no brute-force protection at all before.
-- Stripped `passwordHash` out of the response object before sending it back on login — small thing, but there's no reason a hash (even a bcrypt one) should ever leave the server.
+- Stripped `passwordHash` out of the response object before sending it back on login. small thing, but there's no reason a hash (even a bcrypt one) should ever leave the server.
 
 **What I'd still flag for a production version, not fixed here:**
 
@@ -113,12 +125,11 @@ I tested backend changes directly against the running server with `curl`, one en
 - **Delete:** deleted a client, confirmed via `GET /api/clients` that it was actually gone (this was the core bug. previously it "succeeded" without doing anything), then confirmed deleting the same ID again correctly returns 404.
 - **Project filtering:** filtered by each `clientId` and confirmed the correct subset of projects came back (previously this always returned an empty array).
 - **Add client:** confirmed a new client appears in the list afterward, and that an invalid email is rejected with a 400 before ever reaching the array.
-- **Frontend:** ran the full flow in the browser that is, login, add a client, delete a client, filter projects by client, and logout to confirm the fixes work together, not just in isolation.
+- **Frontend:** ran the full flow in the browser. login, add a client, delete a client, filter projects by client, and logout to confirm the fixes work together, not just in isolation.
+- **Clean-install check:** after the first round of fixes felt complete, I cloned the repo fresh on a separate run-through (rather than trusting my already-running dev copy) and walked through the same flow again. This is what caught bugs #10 and #11 below — both were invisible in my own working session but broke immediately on a clean start, which is a good reminder that "works on my machine" isn't the same as "works."
 
 ## Reflection
 
-**What took the most investigation:** the auth setup. The individual bugs (delete, filter, response shape) were quick once I isolated them with small test scripts, a few minutes each. The auth piece took longer because it wasn't really "one bug," it was a design decision: do I patch the existing fake-token system just enough to make it "work," or actually rebuild it properly? I went with bcrypt + JWT + rate limiting because the assessment specifically calls out security as something to evaluate, and a shared hardcoded token isn't really fixable in a small way. it needed a real replacement, not a patch.
+**What took the most investigation:** the auth setup. The individual bugs (delete, filter, response shape) were quick once I isolated them with small test scripts. The auth piece took longer because it wasn't really "one bug," it was a design decision: do I patch the existing fake-token system just enough to make it "work," or actually rebuild it properly? I went with bcrypt + JWT + rate limiting because the assessment specifically calls out security as something to evaluate, and a shared hardcoded token isn't really fixable in a small way.
 
-**My general approach:** run it first, break it on purpose, then trace each failure back to either the request the frontend sent, what the backend expected, or a type mismatch in between. That's literally how I started. the very first thing I hit running the project as given was a blank white page (bug #1), before I'd even logged in or touched the API. That set the tone for the rest of the debugging: don't assume the code does what it looks like it does, run it and see. Most of the later bugs (delete, filter) turned out to share the exact same root cause. string vs. number comparison showing up in two different places, which made the second one fast to spot once I'd found the first.
-
-**Unresolved / out of scope:** I didn't add persistent storage (database) or tests with a formal test runner (Jest/Vitest), since the brief focused on debugging existing behavior rather than expanding the app's architecture. If this were headed to production I'd want both, plus the CORS/HTTPS items noted in the Security section above.
+**My general approach:** run it first, break it on purpose, then trace each failure back to either the request the frontend sent, what the backend expected, or a type mismatch in between. That's literally how I started. the very first thing I hit running the project as given was a blank white page (bug #1), before I'd even logged in or touched the API. That set the tone for the rest of the debugging: don't assume the code does what it looks like it does, run it and see. Most of the later bugs (delete, filter) turned out to share the exact same root cause — string vs. number comparison — showing up in two different places, which made the second one fast to spot once I'd found the first.
