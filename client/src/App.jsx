@@ -140,6 +140,7 @@ function App() {
     setToken(null);
     setClients([]);
     setProjects([]);
+    setMessage(""); // clear leftover message
   }
 
   useEffect(() => {
