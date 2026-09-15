@@ -25,7 +25,7 @@ const users = [
     id: 1,
     name: "Admin User",
     email: "admin@viek.test",
-    password: bcrypt.hashSync("password123", 10),
+    passwordHash: bcrypt.hashSync("password123", 10),
   },
 ];
 
